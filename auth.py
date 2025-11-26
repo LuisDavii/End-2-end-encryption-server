@@ -37,13 +37,13 @@ async def handle_register(data, websocket):
             await websocket.send(json.dumps({"type": "auth_response", "status": "REGISTER_SUCCESS"}))
 
 
-async def handle_login(data, websocket, online_clients):
+async def handle_login(data,channel ,online_clients):
     username = data.get("username")
     plain_password = data.get("password")
 
     with Database() as db:
         if not db:
-            await websocket.send(json.dumps({"type": "auth_response", "status": "SERVER_ERROR"}))
+            await channel.encrypt_and_send(json.dumps({"type": "auth_response", "status": "SERVER_ERROR"}))
             return None
 
         query = "SELECT senha FROM usuarios WHERE userName = %s;"
@@ -54,20 +54,20 @@ async def handle_login(data, websocket, online_clients):
             try:
                 ph.verify(stored_hash, plain_password)
                 
-                online_clients[username] = websocket
-                await websocket.send(json.dumps({"type": "auth_response", "status": "LOGIN_SUCCESS"}))
+                online_clients[username] = channel
+                await channel.encrypt_and_send(json.dumps({"type": "auth_response", "status": "LOGIN_SUCCESS"}))
                 return username
             
             #senha incorreta
             except VerifyMismatchError:
-                await websocket.send(json.dumps({"type": "auth_response", "status": "LOGIN_FAILED"}))
+                await channel.encrypt_and_send(json.dumps({"type": "auth_response", "status": "LOGIN_FAILED"}))
                 return None
             
             #outro erro qualquer
             except Exception as e:
                 print(f"[Erro de Verificação] {e}")
-                await websocket.send(json.dumps({"type": "auth_response", "status": "LOGIN_FAILED"}))
+                await channel.encrypt_and_send(json.dumps({"type": "auth_response", "status": "LOGIN_FAILED"}))
                 return None
         else:
-            await websocket.send(json.dumps({"type": "auth_response", "status": "LOGIN_FAILED"}))
+            await channel.encrypt_and_send(json.dumps({"type": "auth_response", "status": "LOGIN_FAILED"}))
             return None 

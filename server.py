@@ -4,39 +4,51 @@ import websockets
 
 from auth import handle_login, handle_register
 from chat import handle_chat_session, broadcast_user_list
+from secure_channel import SecureChannel
 
-ONLINE_CLIENTS = {}
+CLIENT_SESSIONS = {}
 
 async def handler(websocket, path):
 
+    channel = SecureChannel(websocket)
     current_user = None
+
     try:
-        print("[Conexão] Novo cliente conectado.")
-        auth_message = await websocket.recv()
-        data = json.loads(auth_message)
-        command = data.get("type")
+            first_message = await websocket.recv()
+            handshake_data = json.loads(first_message)
+            
+            if handshake_data.get("type") == "HANDSHAKE_START":
+                handshake_ok = await channel.handle_handshake(handshake_data)
+                if not handshake_ok:
+                    return # Handshake falhou, encerra a conexão
+            else:
+                print("[Erro] Conexão fechada. Primeira mensagem não foi o handshake.")
+                return
 
-        if command == "REGISTER":
-            await handle_register(data, websocket)
+            auth_message = await channel.recv_and_decrypt()
+            command = auth_message.get("type")
 
-        elif command == "LOGIN":
-            current_user = await handle_login(data, websocket, ONLINE_CLIENTS)
+            if command == "REGISTER":
+                await handle_register(auth_message, channel) 
+            elif command == "LOGIN":
+                current_user = await handle_login(auth_message, channel, CLIENT_SESSIONS)
+                if current_user:
+                    print(f"[Conexão] Usuário '{current_user}' autenticado e online.")
+
+                    CLIENT_SESSIONS[current_user] = channel
+                    await broadcast_user_list(CLIENT_SESSIONS) 
+
             if current_user:
-                print(f"[Conexão] Usuário '{current_user}' autenticado e online.")
-                await broadcast_user_list(ONLINE_CLIENTS)
-
-        if current_user:
-            await handle_chat_session(websocket, current_user, ONLINE_CLIENTS)
+                await handle_chat_session(channel, current_user, CLIENT_SESSIONS)
 
     except Exception as e:
         print(f"[Erro no handler principal] {e}")
-
     finally:
-        if current_user and current_user in ONLINE_CLIENTS:
+
+        if current_user and current_user in CLIENT_SESSIONS:
             print(f"[Desconexão] Usuário '{current_user}' desconectou-se.")
-    
-            del ONLINE_CLIENTS[current_user]
-            await broadcast_user_list(ONLINE_CLIENTS)
+            del CLIENT_SESSIONS[current_user]
+            await broadcast_user_list(CLIENT_SESSIONS)
 
 async def main():
     async with websockets.serve(handler, "localhost", 12345):
