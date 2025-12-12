@@ -33,8 +33,7 @@ class SecureChannel:
         
         self.client_public_key = None
         self.shared_secret = None
-        
-        # As duas chaves exigidas pelo PDF
+
         self.key1_aes = None 
         self.key2_hmac = None 
         
