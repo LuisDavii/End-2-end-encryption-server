@@ -6,7 +6,7 @@
 > 🔗 **[Acesse o Repositório do Cliente Aqui](https://github.com/LuisDavii/End-2-end-encryption-client)**
 
 
-# Servidor de Chat Seguro (Projeto 2)
+# Servidor de Chat Seguro 
 
 Este é o componente Back-end do projeto de Criptografia Ponta-a-Ponta. Ele é responsável por gerenciar conexões WebSocket, autenticação de usuários e roteamento de mensagens cifradas.
 
