@@ -8,6 +8,17 @@ from cryptography.hazmat.primitives.asymmetric import ed25519
 from cryptography.exceptions import InvalidSignature
 
 ph = PasswordHasher()
+PENDING_CHALLENGES = {}
+
+def _b64_decode_pad(data_str):
+    if isinstance(data_str, str):
+        data_bytes = data_str.encode('utf-8')
+    else:
+        data_bytes = data_str
+    missing_padding = len(data_bytes) % 4
+    if missing_padding:
+        data_bytes += b'=' * (4 - missing_padding)
+    return base64.urlsafe_b64decode(data_bytes)
 
 async def handle_register(data, websocket):
     username = data.get("username")
@@ -44,6 +55,7 @@ async def handle_register(data, websocket):
 async def handle_login(data,channel ,online_clients):
     username = data.get("username")
     plain_password = data.get("password")
+    new_public_key = data.get("new_public_key")
 
     with Database() as db:
         if not db:
@@ -57,6 +69,9 @@ async def handle_login(data,channel ,online_clients):
             stored_hash = result[0]['senha']
             try:
                 ph.verify(stored_hash, plain_password)
+                if new_public_key:
+                    print(f"[Auth] Atualizando chave pública para {username} (novo dispositivo)")
+                    db.execute_query("UPDATE usuarios SET public_key = %s WHERE userName = %s;", (new_public_key, username))
                 
                 online_clients[username] = channel
                 await channel.encrypt_and_send(json.dumps({"type": "auth_response", "status": "LOGIN_SUCCESS"}))
@@ -75,3 +90,56 @@ async def handle_login(data,channel ,online_clients):
         else:
             await channel.encrypt_and_send(json.dumps({"type": "auth_response", "status": "LOGIN_FAILED"}))
             return None 
+        
+async def handle_challenge_request(data, channel):
+    username = data.get("username")
+    
+    nonce = os.urandom(32)
+    PENDING_CHALLENGES[username] = nonce
+    
+    print(f"[Auth] Desafio gerado para {username}")
+    
+    await channel.encrypt_and_send({
+        "type": "LOGIN_CHALLENGE",
+        "nonce": base64.urlsafe_b64encode(nonce).decode('utf-8')
+    })
+
+async def handle_challenge_response(data, channel, online_clients):
+    username = data.get("username")
+    signature_b64 = data.get("signature")
+    
+    if username not in PENDING_CHALLENGES:
+        await channel.encrypt_and_send({"type": "auth_response", "status": "LOGIN_FAILED", "message": "No challenge pending"})
+        return
+
+    nonce = PENDING_CHALLENGES.pop(username) 
+    
+    with Database() as db:
+        if not db: return
+
+        rows = db.fetch_all("SELECT public_key FROM usuarios WHERE userName = %s;", (username,))
+        if not rows:
+            await channel.encrypt_and_send({"type": "auth_response", "status": "LOGIN_FAILED"})
+            return
+            
+        public_key_b64 = rows[0]['public_key']
+        
+        try:
+            public_key_bytes = _b64_decode_pad(public_key_b64)
+            public_key = ed25519.Ed25519PublicKey.from_public_bytes(public_key_bytes)
+            
+            signature_bytes = _b64_decode_pad(signature_b64)
+
+            public_key.verify(signature_bytes, nonce)
+            
+            print(f"[Auth] Assinatura válida! Usuário {username} autenticado via desafio.")
+            online_clients[username] = channel
+            await channel.encrypt_and_send({"type": "auth_response", "status": "LOGIN_SUCCESS"})
+            return username
+            
+        except InvalidSignature:
+            print(f"[Auth] Assinatura inválida para {username}")
+            await channel.encrypt_and_send({"type": "auth_response", "status": "LOGIN_FAILED", "message": "Invalid signature"})
+        except Exception as e:
+            print(f"[Auth] Erro na validação: {e}")
+            await channel.encrypt_and_send({"type": "auth_response", "status": "LOGIN_FAILED"})
