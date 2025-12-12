@@ -20,7 +20,7 @@ async def handler(websocket, path):
             if handshake_data.get("type") == "HANDSHAKE_START":
                 handshake_ok = await channel.handle_handshake(handshake_data)
                 if not handshake_ok:
-                    return # Handshake falhou, encerra a conexão
+                    return 
             else:
                 print("[Erro] Conexão fechada. Primeira mensagem não foi o handshake.")
                 return
