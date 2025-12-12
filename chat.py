@@ -14,7 +14,6 @@ async def broadcast_user_list(client_sessions):
             rows = db.fetch_all("SELECT userName FROM usuarios;")
             all_users = [row['userName'] for row in rows]
     
-    # Cria a lista de status
     user_status_list = [
         {
             "username": user,
@@ -23,88 +22,80 @@ async def broadcast_user_list(client_sessions):
     ]
     
     message = {"type": "user_list_update", "users": user_status_list}
-    
-    # Envia a mensagem para todos usando o método .send() do SecureChannel
-    # O .send() já trata a conversão para JSON e encriptação
+
     if client_sessions:
         await asyncio.gather(
             *[client.send(message) for client in client_sessions.values()]
         )
+
 
 async def handle_chat_session(secure_channel, username, online_clients):
     print(f"[Chat] Iniciando sessão de chat para '{username}'.")
     
     try:
         while True:
-            # 1. Espera e descriptografa a próxima mensagem
-            # Nota: recv_and_decrypt já retorna um Dicionário (json.loads já foi feito lá dentro)
             chat_data = await secure_channel.recv_and_decrypt()
-            
             command = chat_data.get("type")
 
-            if command == "REQUEST_USER_LIST":
-                await broadcast_user_list(online_clients)
-            
-            # Manda mensagens de chat
-            elif command == "chat_message":
-                recipient = chat_data.get("to")
-                content = chat_data.get("content")
+            if command in ["E2E_HANDSHAKE", "E2E_AUTH", "E2E_MSG"]:
+                target_user = chat_data.get("to")
+                payload = chat_data.get("payload")
                 
-                chat_message = {
-                    "type": "chat_message",
-                    "from": username,
-                    "content": content
-                }
-
-                # Se o destinatário estiver online, envia a mensagem diretamente
-                if recipient in online_clients:
-                    await online_clients[recipient].send(chat_message)
-                    print(f"[Chat] Mensagem de '{username}' para '{recipient}' (Online).")
-
-                # Se o destinatário estiver offline, guarda a mensagem no banco de dados
-                else:
+                if target_user in online_clients:
+                    await online_clients[target_user].send({
+                        "type": command,
+                        "from": username,
+                        "payload": payload
+                    })
+                    print(f"[Roteamento] {command} de {username} para {target_user}")
+                
+                elif command == "E2E_MSG":
                     with Database() as db:
                         if db:
                             query = "INSERT INTO mensagens_offline (remetente_username, destinatario_username, conteudo) VALUES (%s, %s, %s);"
-                            db.execute_query(query, (username, recipient, content))
-                            print(f"[Chat] Mensagem de '{username}' para '{recipient}' (Offline, guardada).")
-                            # (Opcional) Notificar que há mensagens pendentes ou atualizar lista
-            
+                            db.execute_query(query, (username, target_user, json.dumps(payload)))
+                            print(f"[Offline] Mensagem E2EE guardada para {target_user}")
 
-            # Lógica para o indicador "digitando..."
-            elif command in ["START_TYPING", "STOP_TYPING"]:
-                recipient = chat_data.get("to")
-                
-                typing_status_message = {
-                    "type": "TYPING_STATUS_UPDATE",
-                    "from": username,
-                    "isTyping": command == "START_TYPING" 
-                }
-
-                if recipient in online_clients:
-                    await online_clients[recipient].send(typing_status_message)
-                    print(f"[Typing] Status de '{username}' para '{recipient}'.")
-
-            elif command == "REQUEST_OFFLINE_MESSAGES":
-                print(f"[*] Recebido pedido de mensagens offline de '{username}'.")
+            elif command == "GET_PUBLIC_KEY":
+                target_user = chat_data.get("target_username")
                 with Database() as db:
                     if db:
-                        pending_messages = db.fetch_all("SELECT * FROM mensagens_offline WHERE destinatario_username = %s;", (username,))
-                        
-                        if pending_messages:
-                            for msg in pending_messages:
-                                chat_message = {
-                                    "type": "chat_message", 
-                                    "from": msg['remetente_username'], 
-                                    "content": msg['conteudo']
-                                }
-                                await secure_channel.send(chat_message)
-                            
-                            db.execute_query("DELETE FROM mensagens_offline WHERE destinatario_username = %s;", (username,))
-                            print(f"[*] Mensagens offline para '{username}' enviadas e apagadas.")
+                        rows = db.fetch_all("SELECT public_key FROM usuarios WHERE userName = %s;", (target_user,))
+                        if rows:
+                            pub_key = rows[0]['public_key']
+                            await secure_channel.send({
+                                "type": "PUBLIC_KEY_RESPONSE",
+                                "username": target_user,
+                                "public_key": pub_key
+                            })
+                        else:
+                             await secure_channel.send({"type": "ERROR", "message": "User not found"})
+
+            elif command == "REQUEST_USER_LIST":
+                await broadcast_user_list(online_clients)
+
+            elif command == "REQUEST_OFFLINE_MESSAGES":
+                with Database() as db:
+                    if db:
+                        msgs = db.fetch_all("SELECT * FROM mensagens_offline WHERE destinatario_username = %s;", (username,))
+                        for msg in msgs:
+                            content_json = json.loads(msg['conteudo'])
+                            await secure_channel.send({
+                                "type": "E2E_MSG", 
+                                "from": msg['remetente_username'], 
+                                "payload": content_json
+                            })
+                        db.execute_query("DELETE FROM mensagens_offline WHERE destinatario_username = %s;", (username,))
+
+            elif command in ["START_TYPING", "STOP_TYPING"]:
+                recipient = chat_data.get("to")
+                if recipient in online_clients:
+                    await online_clients[recipient].send({
+                        "type": "TYPING_STATUS_UPDATE",
+                        "from": username,
+                        "isTyping": command == "START_TYPING"
+                    })
 
     except Exception as e:
-        # Isso acontece normalmente quando o cliente desconecta ou há erro na descriptografia
-        print(f"[Chat Loop Encerrado] Usuário '{username}' desconectou ou erro: {e}")
-        # A desconexão real será tratada no 'finally' do server.py
+        print(f"[Chat] Erro/Desconexão de {username}: {e}")
         raise e
