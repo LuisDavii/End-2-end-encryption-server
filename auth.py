@@ -1,7 +1,11 @@
 import json
+import base64
+import os
 from db import Database
 from argon2 import PasswordHasher 
 from argon2.exceptions import VerifyMismatchError
+from cryptography.hazmat.primitives.asymmetric import ed25519
+from cryptography.exceptions import InvalidSignature
 
 ph = PasswordHasher()
 
