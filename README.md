@@ -1,3 +1,11 @@
+
+> ⚠️ **Nota:** Este repositório contém apenas o código do **Servidor (Backend)**.
+>
+> Este projeto funciona em conjunto com o aplicativo móvel. Para ver o código do **Cliente (Frontend)** desenvolvido em Flutter, acesse o repositório complementar:
+>
+> 🔗 **[Acesse o Repositório do Cliente Aqui](https://github.com/LuisDavii/End-2-end-encryption-client)**
+
+
 # Servidor de Chat Seguro (Projeto 2)
 
 Este é o componente Back-end do projeto de Criptografia Ponta-a-Ponta. Ele é responsável por gerenciar conexões WebSocket, autenticação de usuários e roteamento de mensagens cifradas.
@@ -84,3 +92,4 @@ No terminal, dentro da pasta do servidor, execute:
 python server.py
 ```
 Você deverá ver a mensagem: [*] Servidor Principal ouvindo em localhost:12345
+
